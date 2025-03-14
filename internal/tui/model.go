@@ -46,12 +46,19 @@ type Model struct {
 	screen      screen
 	viewport    viewport.Model
 	err         error
+	authType    request.AuthType
 }
 
 func NewModel() Model {
 	inputs := []inputField{
 		{label: "URL", textinput: textinput.New()},
 		{label: "Method", textinput: textinput.New()},
+		{label: "Auth Type (none/basic/apikey/mtls)", textinput: textinput.New()},
+		{label: "Auth Username", textinput: textinput.New()},
+		{label: "Auth Password", textinput: textinput.New()},
+		{label: "API Key", textinput: textinput.New()},
+		{label: "TLS Cert File", textinput: textinput.New()},
+		{label: "TLS Key File", textinput: textinput.New()},
 		{label: "Headers (key:value,key2:value2)", textinput: textinput.New()},
 		{label: "Query Params (key=value&key2=value2)", textinput: textinput.New()},
 		{label: "Body", textinput: textinput.New()},
@@ -70,12 +77,21 @@ func NewModel() Model {
 		}
 	}
 
+	// Configure input placeholders
 	inputs[0].textinput.Placeholder = "https://api.example.com/path"
 	inputs[1].textinput.Placeholder = "GET"
 	inputs[1].textinput.SetValue("GET")
-	inputs[2].textinput.Placeholder = "Content-Type:application/json"
-	inputs[3].textinput.Placeholder = "key=value&key2=value2"
-	inputs[4].textinput.Placeholder = "{\"key\": \"value\"}"
+	inputs[2].textinput.Placeholder = "none"
+	inputs[2].textinput.SetValue("none")
+	inputs[3].textinput.Placeholder = "username"
+	inputs[4].textinput.Placeholder = "password"
+	inputs[4].textinput.EchoMode = textinput.EchoPassword
+	inputs[5].textinput.Placeholder = "your-api-key"
+	inputs[6].textinput.Placeholder = "/path/to/cert.pem"
+	inputs[7].textinput.Placeholder = "/path/to/key.pem"
+	inputs[8].textinput.Placeholder = "Content-Type:application/json"
+	inputs[9].textinput.Placeholder = "key=value&key2=value2"
+	inputs[10].textinput.Placeholder = "{\"key\": \"value\"}"
 
 	return Model{
 		inputs:      inputs,
@@ -83,6 +99,7 @@ func NewModel() Model {
 		requestData: request.NewRequestData(),
 		screen:      screenRequest,
 		viewport:    viewport.New(0, 0),
+		authType:    request.NoAuth,
 	}
 }
 
@@ -183,8 +200,25 @@ func (m *Model) buildRequestData() {
 	m.requestData.URL = m.inputs[0].textinput.Value()
 	m.requestData.Method = m.inputs[1].textinput.Value()
 
+	// Handle authentication
+	authType := request.AuthType(m.inputs[2].textinput.Value())
+	m.requestData.Auth = request.AuthData{
+		Type: authType,
+	}
+
+	switch authType {
+	case request.BasicAuth:
+		m.requestData.Auth.Username = m.inputs[3].textinput.Value()
+		m.requestData.Auth.Password = m.inputs[4].textinput.Value()
+	case request.APIKeyAuth:
+		m.requestData.Auth.APIKey = m.inputs[5].textinput.Value()
+	case request.MutualTLSAuth:
+		m.requestData.Auth.CertFile = m.inputs[6].textinput.Value()
+		m.requestData.Auth.KeyFile = m.inputs[7].textinput.Value()
+	}
+
 	// Parse headers
-	if headers := m.inputs[2].textinput.Value(); headers != "" {
+	if headers := m.inputs[8].textinput.Value(); headers != "" {
 		for _, header := range strings.Split(headers, ",") {
 			parts := strings.SplitN(header, ":", 2)
 			if len(parts) == 2 {
@@ -194,7 +228,7 @@ func (m *Model) buildRequestData() {
 	}
 
 	// Parse query params
-	if params := m.inputs[3].textinput.Value(); params != "" {
+	if params := m.inputs[9].textinput.Value(); params != "" {
 		for _, param := range strings.Split(params, "&") {
 			parts := strings.SplitN(param, "=", 2)
 			if len(parts) == 2 {
@@ -203,7 +237,7 @@ func (m *Model) buildRequestData() {
 		}
 	}
 
-	m.requestData.Body = m.inputs[4].textinput.Value()
+	m.requestData.Body = m.inputs[10].textinput.Value()
 }
 
 func (m Model) executeRequest() tea.Msg {
@@ -243,7 +277,15 @@ func (m Model) renderRequestScreen() string {
 	b.WriteString(titleStyle.Render("Lighttr - HTTP Request Builder"))
 	b.WriteString("\n\n")
 
+	// Get current auth type
+	currentAuthType := request.AuthType(m.inputs[2].textinput.Value())
+
 	for i, input := range m.inputs {
+		// Skip auth fields that aren't relevant for the current auth type
+		if shouldSkipAuthField(i, currentAuthType) {
+			continue
+		}
+
 		style := blurredStyle
 		if i == m.activeInput {
 			style = focusedStyle
@@ -256,6 +298,26 @@ func (m Model) renderRequestScreen() string {
 	return b.String()
 }
 
+// shouldSkipAuthField determines if an auth-related field should be shown based on the current auth type
+func shouldSkipAuthField(fieldIndex int, authType request.AuthType) bool {
+	switch authType {
+	case request.NoAuth:
+		// Hide all auth fields except the auth type selector
+		return fieldIndex >= 3 && fieldIndex <= 7
+	case request.BasicAuth:
+		// Show only username and password fields
+		return (fieldIndex >= 5 && fieldIndex <= 7)
+	case request.APIKeyAuth:
+		// Show only API key field
+		return (fieldIndex >= 3 && fieldIndex <= 4) || (fieldIndex >= 6 && fieldIndex <= 7)
+	case request.MutualTLSAuth:
+		// Show only cert and key file fields
+		return (fieldIndex >= 3 && fieldIndex <= 5)
+	default:
+		return false
+	}
+}
+
 func (m Model) renderPreviewScreen() string {
 	var b strings.Builder
 
@@ -263,6 +325,19 @@ func (m Model) renderPreviewScreen() string {
 	b.WriteString("\n\n")
 
 	b.WriteString(fmt.Sprintf("%s %s\n", m.requestData.Method, m.requestData.URL))
+
+	// Show authentication details
+	b.WriteString(fmt.Sprintf("\nAuthentication: %s\n", m.requestData.Auth.Type))
+	switch m.requestData.Auth.Type {
+	case request.BasicAuth:
+		b.WriteString(fmt.Sprintf("Username: %s\n", m.requestData.Auth.Username))
+		b.WriteString("Password: ********\n")
+	case request.APIKeyAuth:
+		b.WriteString("API Key: ********\n")
+	case request.MutualTLSAuth:
+		b.WriteString(fmt.Sprintf("Certificate File: %s\n", m.requestData.Auth.CertFile))
+		b.WriteString(fmt.Sprintf("Key File: %s\n", m.requestData.Auth.KeyFile))
+	}
 
 	if len(m.requestData.Headers) > 0 {
 		b.WriteString("\nHeaders:\n")

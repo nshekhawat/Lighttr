@@ -6,6 +6,10 @@ Lighttr is a lightweight HTTP request debugger with an interactive TUI interface
 
 - Interactive TUI for building HTTP requests
 - Support for all common HTTP methods (GET, POST, PUT, DELETE, etc.)
+- Multiple authentication methods:
+  - Basic Authentication (username/password)
+  - API Key Authentication
+  - Mutual TLS Authentication (client certificates)
 - Custom headers and query parameters
 - Request body support (JSON, form data, raw text)
 - Request preview before sending
@@ -43,6 +47,12 @@ In the TUI:
 2. Fill in the request details:
    - URL (e.g., https://api.example.com/path)
    - Method (GET, POST, PUT, DELETE, etc.)
+   - Authentication:
+     - Type (none/basic/apikey/mtls)
+     - Credentials based on selected type:
+       - Basic Auth: Username and password
+       - API Key: Your API key (sent as Bearer token)
+       - Mutual TLS: Paths to certificate and key files
    - Headers (format: key:value,key2:value2)
    - Query Parameters (format: key=value&key2=value2)
    - Request Body (JSON, form data, or raw text)
@@ -50,6 +60,51 @@ In the TUI:
 4. Press Enter again to send the request
 5. View the response details
 6. Press ESC to go back or Ctrl+C to quit
+
+### Authentication Examples
+
+#### Basic Authentication
+```bash
+# In TUI mode:
+Auth Type: basic
+Username: your-username
+Password: your-password
+
+# In command-line mode:
+lighttr --method GET \
+        --url "https://api.example.com" \
+        --auth-type basic \
+        --auth-username "your-username" \
+        --auth-password "your-password"
+```
+
+#### API Key Authentication
+```bash
+# In TUI mode:
+Auth Type: apikey
+API Key: your-api-key
+
+# In command-line mode:
+lighttr --method GET \
+        --url "https://api.example.com" \
+        --auth-type apikey \
+        --auth-apikey "your-api-key"
+```
+
+#### Mutual TLS Authentication
+```bash
+# In TUI mode:
+Auth Type: mtls
+TLS Cert File: /path/to/cert.pem
+TLS Key File: /path/to/key.pem
+
+# In command-line mode:
+lighttr --method GET \
+        --url "https://api.example.com" \
+        --auth-type mtls \
+        --auth-cert "/path/to/cert.pem" \
+        --auth-key "/path/to/key.pem"
+```
 
 ### Command-line Mode
 
@@ -67,3 +122,9 @@ Available flags:
 - `--url`: Target URL (required in command-line mode)
 - `--headers`: Request headers in key:value,key2:value2 format
 - `--body`: Request body
+- `--auth-type`: Authentication type (none/basic/apikey/mtls)
+- `--auth-username`: Username for basic auth
+- `--auth-password`: Password for basic auth
+- `--auth-apikey`: API key for API key auth
+- `--auth-cert`: Certificate file path for mutual TLS
+- `--auth-key`: Key file path for mutual TLS

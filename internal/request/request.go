@@ -1,13 +1,34 @@
 package request
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
+
+type AuthType string
+
+const (
+	NoAuth        AuthType = "none"
+	BasicAuth     AuthType = "basic"
+	APIKeyAuth    AuthType = "apikey"
+	MutualTLSAuth AuthType = "mtls"
+)
+
+// AuthData represents authentication configuration
+type AuthData struct {
+	Type     AuthType `json:"type"`
+	Username string   `json:"username,omitempty"`
+	Password string   `json:"password,omitempty"`
+	APIKey   string   `json:"api_key,omitempty"`
+	CertFile string   `json:"cert_file,omitempty"`
+	KeyFile  string   `json:"key_file,omitempty"`
+}
 
 // RequestData represents a complete HTTP request configuration
 type RequestData struct {
@@ -17,6 +38,7 @@ type RequestData struct {
 	QueryParams map[string]string `json:"query_params"`
 	Body        string            `json:"body"`
 	Timestamp   time.Time         `json:"timestamp"`
+	Auth        AuthData          `json:"auth"`
 }
 
 // ResponseData represents the HTTP response
@@ -35,6 +57,7 @@ func NewRequestData() *RequestData {
 		Headers:     make(map[string]string),
 		QueryParams: make(map[string]string),
 		Timestamp:   time.Now(),
+		Auth:        AuthData{Type: NoAuth},
 	}
 }
 
@@ -69,9 +92,41 @@ func (r *RequestData) Execute() (*ResponseData, error) {
 		req.Header.Add(key, value)
 	}
 
+	// Configure client based on auth type
+	client := &http.Client{}
+
+	// Apply authentication
+	switch r.Auth.Type {
+	case BasicAuth:
+		req.SetBasicAuth(r.Auth.Username, r.Auth.Password)
+
+	case APIKeyAuth:
+		if r.Auth.APIKey != "" {
+			// Try to get header name from Headers map, default to "Authorization"
+			headerName := "Authorization"
+			req.Header.Add(headerName, "Bearer "+r.Auth.APIKey)
+		}
+
+	case MutualTLSAuth:
+		// Load client certificate
+		cert, err := tls.LoadX509KeyPair(r.Auth.CertFile, r.Auth.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %v", err)
+		}
+
+		// Create TLS config
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+
+		// Create custom transport with TLS config
+		client.Transport = &http.Transport{
+			TLSClientConfig: tlsConfig,
+		}
+	}
+
 	// Execute the request
 	start := time.Now()
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	duration := time.Since(start)
 
@@ -118,5 +173,39 @@ func (r *RequestData) Validate() error {
 	if parsedURL.Scheme == "" || parsedURL.Host == "" {
 		return fmt.Errorf("invalid URL: must include scheme and host")
 	}
+
+	// Validate authentication configuration
+	switch r.Auth.Type {
+	case BasicAuth:
+		if r.Auth.Username == "" {
+			return fmt.Errorf("username is required for basic authentication")
+		}
+		if r.Auth.Password == "" {
+			return fmt.Errorf("password is required for basic authentication")
+		}
+	case APIKeyAuth:
+		if r.Auth.APIKey == "" {
+			return fmt.Errorf("API key is required for API key authentication")
+		}
+	case MutualTLSAuth:
+		if r.Auth.CertFile == "" {
+			return fmt.Errorf("certificate file is required for mutual TLS authentication")
+		}
+		if r.Auth.KeyFile == "" {
+			return fmt.Errorf("key file is required for mutual TLS authentication")
+		}
+		// Check if cert and key files exist
+		if _, err := os.Stat(r.Auth.CertFile); os.IsNotExist(err) {
+			return fmt.Errorf("certificate file does not exist: %s", r.Auth.CertFile)
+		}
+		if _, err := os.Stat(r.Auth.KeyFile); os.IsNotExist(err) {
+			return fmt.Errorf("key file does not exist: %s", r.Auth.KeyFile)
+		}
+	case NoAuth:
+		// No validation needed for NoAuth
+	default:
+		return fmt.Errorf("invalid authentication type: %s", r.Auth.Type)
+	}
+
 	return nil
 }
